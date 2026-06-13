@@ -3,10 +3,8 @@ import { ToolListChangedNotificationSchema, LoggingMessageNotificationSchema } f
 import type { McpConfigMap, McpServerConfig, McpSettings, McpStatus, CachedTool, CachedPrompt, CachedResource } from "./types.ts";
 import { defaultTimeout } from "./config.ts";
 import { connectLocal } from "./local.ts";
-import { connectRemote } from "./remote.ts";
-import { listAllPrompts, listAllResources, listAllTools } from "./resources.ts";
-import { sanitizeName } from "./tools.ts";
-import { withTimeout } from "./util.ts";
+import { connectRemote, type PendingOAuth } from "./remote.ts";
+import { catalogPrompts, catalogResources, catalogTools, discoverCatalog } from "./catalog.ts";
 
 export class McpService {
   readonly cwd: string;
@@ -33,7 +31,13 @@ export class McpService {
   async connectAndStore(name: string, cfg: McpServerConfig) {
     if (cfg.enabled === false) { this.status.set(name, { state: "disabled" }); return; }
     try {
-      const result = cfg.type === "local" ? await connectLocal(name, cfg, this.cwd, this.timeout(cfg)) : await connectRemote(name, cfg, this.timeout(cfg), this);
+      const result: { status: McpStatus; client?: Client; pendingOAuth?: PendingOAuth } = cfg.type === "local"
+        ? await connectLocal(name, cfg, this.cwd, this.timeout(cfg))
+        : await connectRemote(name, cfg, this.timeout(cfg));
+      if (result.pendingOAuth) {
+        this.pendingOAuthTransports.set(name, result.pendingOAuth.transport);
+        if (result.pendingOAuth.provider) this.pendingOAuthProviders.set(name, result.pendingOAuth.provider);
+      }
       this.status.set(name, result.status);
       if (result.client) {
         this.clients.set(name, result.client);
@@ -47,9 +51,10 @@ export class McpService {
     if (!client) return;
     const cfg = this.config[name];
     const timeout = cfg ? this.timeout(cfg) : 30_000;
-    this.defs.set(name, await withTimeout(listAllTools(client), timeout, `MCP tools/list timed out for ${name}`).catch(() => []));
-    this.prompts.set(name, await withTimeout(listAllPrompts(client), timeout, `MCP prompts/list timed out for ${name}`).catch(() => []));
-    this.resources.set(name, await withTimeout(listAllResources(client), timeout, `MCP resources/list timed out for ${name}`).catch(() => []));
+    const catalog = await discoverCatalog(client, name, timeout);
+    this.defs.set(name, catalog.tools);
+    this.prompts.set(name, catalog.prompts);
+    this.resources.set(name, catalog.resources);
   }
 
   watchClient(name: string, client: any) {
@@ -61,9 +66,9 @@ export class McpService {
     client.onclose = () => { this.clients.delete(name); this.defs.delete(name); this.status.set(name, { state: "failed", error: "Connection closed" }); this.emitToolsChanged(); };
   }
 
-  getTools(): CachedTool[] { const out: CachedTool[] = []; for (const [serverName, tools] of this.defs) for (const tool of tools) out.push({ serverName, tool, piName: `${sanitizeName(serverName)}_${sanitizeName(tool.name)}` }); return out; }
-  getPrompts(): CachedPrompt[] { const out: CachedPrompt[] = []; for (const [serverName, prompts] of this.prompts) for (const prompt of prompts) out.push({ serverName, prompt, key: `${sanitizeName(serverName)}:${sanitizeName(prompt.name)}` }); return out; }
-  getResources(): CachedResource[] { const out: CachedResource[] = []; for (const [serverName, resources] of this.resources) for (const resource of resources) out.push({ serverName, resource, key: `${sanitizeName(serverName)}:${sanitizeName(resource.name ?? resource.uri)}` }); return out; }
+  getTools(): CachedTool[] { return [...this.defs].flatMap(([serverName, tools]) => catalogTools(serverName, tools)); }
+  getPrompts(): CachedPrompt[] { return [...this.prompts].flatMap(([serverName, prompts]) => catalogPrompts(serverName, prompts)); }
+  getResources(): CachedResource[] { return [...this.resources].flatMap(([serverName, resources]) => catalogResources(serverName, resources)); }
   getClient(name: string) { return this.clients.get(name); }
   statusSummary() { const connected = [...this.status.values()].filter(s => s.state === "connected").length; const total = this.status.size; return total ? `MCP ${connected}/${total}` : undefined; }
   onToolsChanged(fn: () => void) { this.listeners.add(fn); }
