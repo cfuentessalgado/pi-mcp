@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { addServerConfig, loadMcpSettings } from "./config.ts";
 import type { McpService } from "./service.ts";
@@ -7,6 +8,13 @@ import { getPrompt, readResource } from "./resources.ts";
 
 function parseKeyValues(values: string[]) { const out: Record<string,string> = {}; for (const v of values) { const i = v.indexOf("="); if (i > 0) out[v.slice(0,i)] = v.slice(i+1); } return out; }
 function print(ctx: ExtensionCommandContext, msg: string) { ctx.ui.notify(msg, "info"); }
+function openUrl(url: string) {
+  const platform = process.platform;
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
+  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.unref();
+}
 
 async function authList(ctx: ExtensionCommandContext, service: McpService) {
   const store = new McpAuthStore(); const auth = await store.list();
@@ -44,7 +52,8 @@ export function registerMcpCommands(_pi: ExtensionAPI, service: McpService) {
       const url = provider?.authorizationUrl;
       if (!transport || !provider || !url) return ctx.ui.notify(`No pending OAuth authorization URL for ${name}. Current status: ${service.status.get(name)?.state ?? "unknown"}`, "error");
       await callbackServer.listen(provider.redirectUrl?.toString?.());
-      print(ctx, `Open this URL to authorize ${name}:\n${url.toString()}`);
+      try { openUrl(url.toString()); ctx.ui.notify(`Opened browser to authorize ${name}.`, "info"); }
+      catch { print(ctx, `Open this URL to authorize ${name}:\n${url.toString()}`); }
       try {
         const code = await callbackServer.wait(await provider.state(), name);
         await transport.finishAuth(code);
