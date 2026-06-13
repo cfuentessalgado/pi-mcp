@@ -28,6 +28,7 @@ export async function connectRemote(name: string, cfg: RemoteMcpConfig, timeout:
       if (isAuthError(e)) {
         if (isClientRegistrationError(e)) return { status: { state: "needs_client_registration", error: asError(e) } };
         if (transport) service.pendingOAuthTransports.set(name, transport);
+        if (authProvider) service.pendingOAuthProviders.set(name, authProvider);
         return { status: { state: "needs_auth", error: asError(e) } };
       }
       last = { state: "failed", error: asError(e) };

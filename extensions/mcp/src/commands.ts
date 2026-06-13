@@ -33,7 +33,28 @@ export function registerMcpCommands(_pi: ExtensionAPI, service: McpService) {
     }
     if (cmd === "auth" && parts[0] === "list") return authList(ctx, service);
     if (cmd === "logout") { const name = parts[0]; if (!name) return ctx.ui.notify("Usage: /mcp logout NAME", "error"); await new McpAuthStore().delete(name); callbackServer.cancelName(name); ctx.ui.notify(`Removed MCP credentials for ${name}.`, "info"); return; }
-    if (cmd === "auth") { const name = parts[0]; if (!name) return ctx.ui.notify("Usage: /mcp auth NAME", "error"); const cfg: any = service.config[name]; if (!cfg || cfg.type !== "remote" || cfg.oauth === false) return ctx.ui.notify("Server is not an OAuth-enabled remote MCP server.", "error"); ctx.ui.notify(`If ${name} needs auth, run /mcp debug ${name} for status. Browser OAuth is implemented through the MCP SDK provider and callback server.`, "info"); return; }
+    if (cmd === "auth") {
+      const name = parts[0];
+      if (!name) return ctx.ui.notify("Usage: /mcp auth NAME", "error");
+      const cfg: any = service.config[name];
+      if (!cfg || cfg.type !== "remote" || cfg.oauth === false) return ctx.ui.notify("Server is not an OAuth-enabled remote MCP server.", "error");
+      if (!service.pendingOAuthTransports.get(name)) await service.connectAndStore(name, cfg);
+      const transport = service.pendingOAuthTransports.get(name);
+      const provider = service.pendingOAuthProviders.get(name);
+      const url = provider?.authorizationUrl;
+      if (!transport || !provider || !url) return ctx.ui.notify(`No pending OAuth authorization URL for ${name}. Current status: ${service.status.get(name)?.state ?? "unknown"}`, "error");
+      await callbackServer.listen(provider.redirectUrl?.toString?.());
+      print(ctx, `Open this URL to authorize ${name}:\n${url.toString()}`);
+      try {
+        const code = await callbackServer.wait(await provider.state(), name);
+        await transport.finishAuth(code);
+        service.pendingOAuthTransports.delete(name);
+        service.pendingOAuthProviders.delete(name);
+        await service.connectAndStore(name, cfg);
+        ctx.ui.notify(`Authenticated ${name}. Status: ${service.status.get(name)?.state ?? "unknown"}`, "info");
+      } catch (e) { ctx.ui.notify(`OAuth failed for ${name}: ${e instanceof Error ? e.message : String(e)}`, "error"); }
+      return;
+    }
     if (cmd === "debug") { const name = parts[0]; const cfg: any = name && service.config[name]; if (!cfg) return ctx.ui.notify("Unknown MCP server", "error"); return print(ctx, JSON.stringify({ config: { ...cfg, headers: cfg.headers ? "[redacted]" : undefined }, status: service.status.get(name) }, null, 2)); }
     if (cmd === "prompts") return print(ctx, service.getPrompts().map(p => p.key).join("\n") || "No MCP prompts cached.");
     if (cmd === "resources") return print(ctx, service.getResources().map(r => `${r.key}\t${r.resource.uri}`).join("\n") || "No MCP resources cached.");

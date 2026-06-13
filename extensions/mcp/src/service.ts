@@ -18,6 +18,7 @@ export class McpService {
   prompts = new Map<string, any[]>();
   resources = new Map<string, any[]>();
   pendingOAuthTransports = new Map<string, any>();
+  pendingOAuthProviders = new Map<string, any>();
   private listeners = new Set<() => void>();
   private initializePromise?: Promise<void>;
 
