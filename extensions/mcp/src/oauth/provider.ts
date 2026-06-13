@@ -6,7 +6,7 @@ export class McpOAuthProvider {
   constructor(public name: string, public cfg: RemoteMcpConfig) {}
   private oauthConfig() { return this.cfg.oauth && typeof this.cfg.oauth === "object" ? this.cfg.oauth : {}; }
   get redirectUrl() { const oauth = this.oauthConfig(); return new URL(oauth.redirectUri ?? `http://127.0.0.1:${oauth.callbackPort ?? 19876}/mcp/oauth/callback`); }
-  get clientMetadata() { const oauth = this.oauthConfig(); return { client_name: "Pi MCP", client_uri: "https://pi.dev", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: oauth.clientSecret ? "client_secret_post" : "none", scope: oauth.scope }; }
+  get clientMetadata() { const oauth = this.oauthConfig(); return { client_name: "Pi MCP", client_uri: "https://pi.dev", redirect_uris: [this.redirectUrl.toString()], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: oauth.clientSecret ? "client_secret_post" : "none", scope: oauth.scope }; }
   async clientInformation() { const oauth = this.oauthConfig(); if (oauth.clientId) return { client_id: oauth.clientId, client_secret: oauth.clientSecret }; return (await this.store.getForUrl(this.name, this.cfg.url))?.clientInfo; }
   async saveClientInformation(info: any) { await this.store.patch(this.name, this.cfg.url, { clientInfo: info }); }
   async tokens() { return (await this.store.getForUrl(this.name, this.cfg.url))?.tokens; }
