@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { McpService } from "./src/service.ts";
 import { loadMcpSettings } from "./src/config.ts";
@@ -20,6 +24,22 @@ export default function (pi: ExtensionAPI) {
 
   servicePromise.then((service) => registerMcpCommands(pi, service)).catch((error) => {
     console.error("[mcp] failed to load settings", error);
+  });
+
+  pi.on("resources_discover", async () => {
+    const service = await servicePromise;
+    await service.initialize();
+    const promptDir = join(tmpdir(), "pi-mcp-prompts", createHash("sha256").update(cwd).digest("hex").slice(0, 12));
+    await mkdir(promptDir, { recursive: true });
+    for (const prompt of service.getPrompts()) {
+      const client = service.getClient(prompt.serverName);
+      if (!client) continue;
+      const result = await getPrompt(client, prompt.prompt.name);
+      const name = sanitizeFileName(prompt.prompt.name);
+      const description = String(prompt.prompt.description ?? `MCP prompt ${prompt.key}`).replace(/\n/g, " ");
+      await writeFile(join(promptDir, `${name}.md`), `---\ndescription: ${JSON.stringify(description)}\n---\n${promptResultToText(result)}\n`, "utf8");
+    }
+    return { promptPaths: [promptDir] };
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -55,6 +75,10 @@ export default function (pi: ExtensionAPI) {
     const result = await getPrompt(client, prompt.prompt.name, args);
     return { action: "transform", text: promptResultToText(result) };
   });
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "mcp-prompt";
 }
 
 function parsePromptArgs(input: string): Record<string, unknown> {
