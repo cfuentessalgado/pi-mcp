@@ -6,9 +6,11 @@ export function normalizeMcpResult(result: any) {
   for (const p of parts) {
     if (p?.type === "text") text.push(p.text ?? "");
     else if (p?.type === "image") {
-      const mime = p.mimeType ?? "image/png";
-      const data = String(p.data ?? "");
-      content.push({ type: "image", image: data.startsWith("data:") ? data : `data:${mime};base64,${data}` });
+      const rawData = String(p.data ?? "");
+      const dataUrlMatch = rawData.match(/^data:([^;,]+);base64,(.*)$/s);
+      const mimeType = p.mimeType ?? dataUrlMatch?.[1] ?? "image/png";
+      const data = dataUrlMatch?.[2] ?? rawData;
+      content.push({ type: "image", data, mimeType });
     } else if (p?.type === "resource") {
       const r = p.resource ?? p;
       if (r.text) text.push(`\n[Embedded resource: ${r.uri ?? "unknown"}]\n${r.text}`);
