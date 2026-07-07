@@ -27,22 +27,54 @@ function listServers(ctx: any, service: McpService) {
 
 async function addServer(parts: string[], ctx: any) {
   const scope = parts.includes("--global") ? "global" : "project";
+  parts = parts.filter(p => p !== "--global");
   const name = parts.shift();
-  if (!name) return error(ctx, "Usage: /mcp add NAME --url URL [--header K=V] OR /mcp add NAME -- command args...");
+  if (!name) return addServerWizard(ctx, scope);
+  if (name.startsWith("--")) return addServerWizard(ctx, scope);
   let cfg: any;
   const urlIdx = parts.indexOf("--url");
   const dashIdx = parts.indexOf("--");
   if (urlIdx >= 0) {
     const url = parts[urlIdx + 1];
+    if (!url) return error(ctx, "Missing URL after --url.");
     const headers = parseKeyValues(optionValues(parts, "--header"));
     cfg = { type: "remote", url, headers, enabled: true };
   } else if (dashIdx >= 0) {
-    const command = parts.slice(dashIdx + 1).filter(p => !p.startsWith("--env"));
+    const command = parts.slice(dashIdx + 1).filter((p, i, a) => a[i - 1] !== "--env" && !p.startsWith("--env"));
+    if (!command.length) return error(ctx, "Missing command after --.");
     const env = parseKeyValues(optionValues(parts, "--env"));
     cfg = { type: "local", command, environment: env, enabled: true };
-  } else return error(ctx, "Missing --url or -- command.");
+  } else return addServerWizard(ctx, scope, name);
   const path = await addServerConfig(name, cfg, scope as any);
   ctx.ui.notify(`Added MCP server ${name} to ${path}. Run /reload.`, "info");
+}
+
+async function addServerWizard(ctx: any, initialScope: string, initialName?: string) {
+  const name = initialName || await ctx.ui.input("MCP server name", "context7");
+  if (!name) return;
+  const type = await ctx.ui.select("MCP server type", ["Remote HTTP/SSE", "Local stdio"]);
+  if (!type) return;
+  const scopeChoice = await ctx.ui.select("Where should this be saved?", initialScope === "global" ? ["Global", "Project"] : ["Project", "Global"]);
+  if (!scopeChoice) return;
+  const scope = scopeChoice === "Global" ? "global" : "project";
+  let cfg: any;
+  if (type === "Remote HTTP/SSE") {
+    const url = await ctx.ui.input("Remote MCP URL", "https://example.com/mcp");
+    if (!url) return;
+    const rawHeaders = await ctx.ui.input("Headers (optional, comma-separated KEY=VALUE)", "Authorization=Bearer ...");
+    cfg = { type: "remote", url, headers: parseKeyValues(splitPairs(rawHeaders)), enabled: true };
+  } else {
+    const commandText = await ctx.ui.input("Command", "npx -y @modelcontextprotocol/server-filesystem .");
+    if (!commandText) return;
+    const rawEnv = await ctx.ui.input("Environment (optional, comma-separated KEY=VALUE)", "API_KEY=...");
+    cfg = { type: "local", command: commandText.trim().split(/\s+/), environment: parseKeyValues(splitPairs(rawEnv)), enabled: true };
+  }
+  const path = await addServerConfig(name, cfg, scope as any);
+  ctx.ui.notify(`Added MCP server ${name} to ${path}. Run /reload.`, "info");
+}
+
+function splitPairs(value?: string) {
+  return (value ?? "").split(/[\n,]+/).map(v => v.trim()).filter(Boolean);
 }
 
 async function authList(ctx: any, service: McpService) {
