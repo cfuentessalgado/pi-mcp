@@ -13,6 +13,7 @@ export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();
   const servicePromise = loadMcpSettings(cwd).then((settings) => new McpService({ cwd, settings }));
   const registered = new Set<string>();
+  let displayedStatus: string | undefined;
 
   const registerDiscoveredTools = (service: McpService) => {
     for (const cached of service.getTools()) {
@@ -42,17 +43,24 @@ export default function (pi: ExtensionAPI) {
     return { promptPaths: [promptDir] };
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     const service = await servicePromise;
-    ctx.ui.setStatus("mcp", "MCP connecting…");
     void service.initialize().then(() => {
       registerDiscoveredTools(service);
       const summary = service.statusSummary();
-      ctx.ui.setStatus("mcp", summary);
-      ctx.ui.notify(`MCP initialized: ${summary ?? "no servers"}`, "info");
+      if (summary !== displayedStatus) {
+        displayedStatus = summary;
+        ctx.ui.setStatus("mcp", summary);
+      }
+      if (event.reason !== "resume") {
+        ctx.ui.notify(`MCP initialized: ${summary ?? "no servers"}`, "info");
+      }
     }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.ui.setStatus("mcp", "MCP failed");
+      if (displayedStatus !== "MCP failed") {
+        displayedStatus = "MCP failed";
+        ctx.ui.setStatus("mcp", "MCP failed");
+      }
       ctx.ui.notify(`MCP initialization failed: ${message}`, "error");
     });
   });
